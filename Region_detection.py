@@ -3,7 +3,7 @@ import numpy as np
 from ultralytics import YOLO
 import json
 from ultralytics.utils.plotting import Annotator
-
+from ultralytics.utils.checks import check_imshow
 
 class Manages_Parts:
     """Manages parking occupancy and availability using YOLOv8 for real-time monitoring and visualization."""
@@ -13,8 +13,9 @@ class Manages_Parts:
         model_path,
         txt_color=(0, 0, 0),
         bg_color=(255, 255, 255),
-        occupied_region_color=(0, 255, 0),
-        available_region_color=(0, 0, 255),
+        correct_region_color=(0, 255, 0),
+        incorrect_region_color=(255, 0, 0),
+        empty_region_color=(0, 0, 255),
         margin=10,
     ):
         """
@@ -33,15 +34,17 @@ class Manages_Parts:
         self.model = self.load_model()
 
         # Labels dictionary
-        self.labels_dict = {"Correct_parts": 0, "Empty_parts": 0}
-
+        self.labels_dict = {"Correct_parts": 0, "Inceorrect_parts":0, "Empty_parts": 0}
+        self.env_check = check_imshow(warn=True)
         # Visualization details
         self.margin = margin
         self.bg_color = bg_color
         self.txt_color = txt_color
-        self.occupied_region_color = occupied_region_color
-        self.available_region_color = available_region_color
-
+        self.correct_region_color = correct_region_color
+        self.empty_region_color = empty_region_color
+        self.incorrect_region_color = incorrect_region_color
+        self.class_info = ["battery", "beeper", "led", "sd_card", "spring", "uart", "usb_c"]
+        self.clas_dict = {self.class_info[i] : i  for i in range(len(self.class_info))}
         self.window_name = "Ultralytics YOLOv8 Parking Management System"
         # Check if environment supports imshow
 
@@ -76,11 +79,13 @@ class Manages_Parts:
             empty_slots (int): total slots that are available in parking lot
         """
         annotator = Annotator(im0)
-        empty_slots, filled_slots = len(json_data), 0
+        empty_slots, correct_filled_slots, incorrect_filled_slots = len(json_data), 0, 0
         for region in json_data:
             points_array = np.array(region["points"], dtype=np.int32).reshape((-1, 1, 2))
-            class_name = region["class"]
-            region_occupied = False
+            class_name = self.clas_dict[region["class"]]
+            correct_region = False
+            incorrect_region = False
+            emtpy_region = False
 
             for box, cls in zip(boxes, clss):
                 x_center = int((box[0] + box[2]) / 2)
@@ -93,19 +98,31 @@ class Manages_Parts:
                 dist = cv2.pointPolygonTest(points_array, (x_center, y_center), False)
                 if dist >= 0:
                     if class_name == cls:
-                        region_occupied = True
+                        correct_region = True
                         break
                     else:
-                        region_occupied = False
-
-            color = self.occupied_region_color if region_occupied else self.available_region_color
+                        incorrect_region = True
+                        break
+                else:
+                    emtpy_region = True
+                    
+            if correct_region:
+                color = self.correct_region_color
+            elif incorrect_region:
+                color = self.incorrect_region_color
+            elif emtpy_region:
+                color = self.empty_region_color
             cv2.polylines(im0, [points_array], isClosed=True, color=color, thickness=2)
-            if region_occupied:
-                filled_slots += 1
+            if correct_region:
+                correct_filled_slots += 1
+                empty_slots -= 1
+            if incorrect_region:
+                incorrect_filled_slots += 1
                 empty_slots -= 1
 
-        self.labels_dict["Correct_parts"] = filled_slots
+        self.labels_dict["Correct_parts"] = correct_filled_slots
         self.labels_dict["Empty_parts"] = empty_slots
+        self.labels_dict["Inceorrect_parts"] = incorrect_filled_slots
 
         annotator.display_analytics(im0, self.labels_dict, self.txt_color, self.bg_color, self.margin)
 
